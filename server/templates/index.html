@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cough Detector</title>
+    <!-- Bootstrap CSS -->
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css">
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
+    <style>
+        #micButton {
+            border-radius: 50%;
+            width: 80px;
+            /* Set a fixed width */
+            height: 80px;
+            /* Set a fixed height */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        #volumeBar {
+            height: 10px;
+            transition: width 0.1s;
+        }
+    </style>
+</head>
+
+<body class="bg-light">
+
+    <div class="container py-5">
+        <div class="row justify-content-center">
+            <div class="col-md-6 text-center">
+                <div class="card">
+                    <div class="card-body">
+                        <h3 class="card-title mb-4">Cough Detector</h3>
+                        <div id="status" class="alert alert-danger" role="alert">
+                            Backend Status: Offline
+                        </div>
+                        <div class="d-flex justify-content-center align-items-center">
+                            <button id="micButton" class="btn btn-secondary" onmousedown="startRecording()"
+                                disabled="true" onmouseup="stopRecording()" ontouchstart="startRecording()"
+                                ontouchend="stopRecording()">
+                                <i class="fas fa-microphone"></i>
+                            </button>
+                        </div>
+                        <div class="progress mt-3" style="height: 10px;">
+                            <div id="volumeBar" class="progress-bar" role="progressbar"></div>
+                        </div>
+                        <div id="processingIcon" class="mb-3 d-none mt-3">
+                            <i class="fas fa-spinner fa-spin fa-3x"></i>
+                        </div>
+                        <div id="result" class="alert" role="alert" style="display:none;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript -->
+    <script>
+        const BASE_URL = 'https://cough-detector.kchai.me';
+        let mediaRecorder;
+        let audioChunks = [];
+        let audioContext, microphone, meterNode;
+        const options = {
+            mimeType: 'audio/webm;codecs=opus'
+        };
+        async function checkBackendStatus() {
+            try {
+                const response = await fetch(`${BASE_URL}/status`);
+                const statusDiv = document.getElementById('status');
+                if (response.ok) {
+                    statusDiv.textContent = "Backend Status: Online";
+                    statusDiv.classList.remove('alert-danger');
+                    statusDiv.classList.add('alert-success');
+                    if (document.getElementById('micButton') != null)
+                        document.getElementById('micButton').disabled = false;
+                } else {
+                    throw new Error('Backend is offline');
+                }
+            } catch (error) {
+                console.error(error);
+            }
+        }
+      
+        async function startRecording() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                await audioContext.audioWorklet.addModule('volume-meter-processor.js');
+                console.log('Audio context set up');
+                microphone = audioContext.createMediaStreamSource(stream);
+                meterNode = new AudioWorkletNode(audioContext, 'volume-meter-processor');
+                microphone.connect(meterNode).connect(audioContext.destination);
+                meterNode.port.onmessage = (event) => {
+                    const volume = event.data.volume;
+                    document.getElementById('volumeBar').style.width = Math.min(100, volume * 200) + '%';
+                };
+
+
+                mediaRecorder = new MediaRecorder(stream, options);
+                audioChunks = [];
+                mediaRecorder.ondataavailable = event => {
+                    audioChunks.push(event.data);
+                };
+                mediaRecorder.start();
+            } catch (error) {
+                console.error(error);
+            }
+        }
+        function convertAudioChunksToAudioBuffer(audioChunks) {
+            const audioBlob = new Blob(audioChunks);
+            return new Promise(resolve => {
+                const fileReader = new FileReader();
+                fileReader.onload = event => {
+                    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    audioContext.decodeAudioData(event.target.result, resolve);
+                };
+                fileReader.readAsArrayBuffer(audioBlob);
+            });
+        }
+        async function stopRecording() {
+            if (mediaRecorder) {
+                mediaRecorder.onstop = async () => {
+                    document.getElementById('processingIcon').classList.remove('d-none');
+                    
+                    const audioBlob = new Blob(audioChunks);
+                    
+                    const formData = new FormData();
+                    
+                    formData.append("audio", audioBlob);
+                    try {
+                        const response = await fetch(`${BASE_URL}/audio`, { method: 'POST', body: formData });
+                        // ... rest of your code ...
+                        const result = await response.json();
+                        document.getElementById('processingIcon').classList.add('d-none');
+                        const resultDiv = document.getElementById('result');
+                        resultDiv.textContent = result.cough_detected ? 'Cough detected' : 'No cough detected';
+                        resultDiv.style.display = 'block';
+                        resultDiv.className = result.cough_detected ? 'alert alert-danger' : 'alert alert-success';
+                    } catch (error) {
+                        document.getElementById('processingIcon').classList.add('d-none');
+                        console.error('Error sending audio data:', error);
+                        const resultDiv = document.getElementById('result');
+                        resultDiv.textContent = 'Error sending audio data';
+                        resultDiv.style.display = 'block';
+                        resultDiv.className = 'alert alert-danger';
+                    }
+
+
+                };
+                mediaRecorder.stop();
+                // Reset the volume bar to zero
+                document.getElementById('volumeBar').style.width = '0%';
+                
+                microphone.disconnect();
+                audioContext.close();
+            }
+        }
+
+
+        checkBackendStatus();
+    </script>
+
+    <!-- Bootstrap JS and dependencies -->
+
+    <script src="https://code.jquery.com/jquery-3.2.1.slim.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.12.9/umd/popper.min.js"></script>
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/js/bootstrap.min.js"></script>
+    <!-- <script type="text/javascript" src="https://unpkg.com/meyda@5.6.2/dist/web/meyda.min.js"></script> -->
+</body>
+
+</html>

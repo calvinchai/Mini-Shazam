@@ -1,0 +1,6 @@
+*.exe
+*.wav
+*.pyc
+*.npy
+*.pth
+*.mp3
